@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f7fb">
+  <title>Vagas de TI dos últimos 30 dias</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#" aria-label="Vagas de TI">
+      <span class="brand-mark" aria-hidden="true">V</span>
+      <span>Vagas de TI</span>
+    </a>
+    <span class="local-badge"><span aria-hidden="true"></span> Atualizadas nos últimos 30 dias</span>
+  </header>
+
+  <main>
+    <section class="intro">
+      <p class="eyebrow">OPORTUNIDADES EM TECNOLOGIA</p>
+      <h1>Encontre vagas de TI.<br>As mais recentes primeiro.</h1>
+      <p>Vagas de tecnologia da informação, sem limitar a estágio ou júnior. Excluo níveis pleno, sênior e equivalentes; mostro publicações dos últimos 30 dias.</p>
+    </section>
+
+    <section class="panel search-panel">
+      <div class="preferences">
+        <label class="location-field">Localidade
+          <input id="location" class="text-input" value="Brasil" placeholder="Brasil, Manaus/AM..." autocomplete="off">
+        </label>
+        <label class="mode-field">Modalidade
+          <select id="preference" class="text-input">
+            <option value="all" selected>Todas</option>
+            <option value="remote">Remoto</option>
+            <option value="hybrid">Híbrido</option>
+            <option value="onsite">Presencial / não informada</option>
+          </select>
+        </label>
+        <button id="search-button" class="button button-secondary" type="button">Filtrar vagas</button>
+      </div>
+      <p id="status" class="status" role="status" aria-live="polite">Carregando oportunidades recentes…</p>
+    </section>
+
+    <section id="results-section" class="results-section" hidden>
+      <div class="results-heading">
+        <div>
+          <p class="eyebrow">OPORTUNIDADES ENCONTRADAS</p>
+          <h2 id="results-title">Vagas recentes</h2>
+        </div>
+        <span id="results-meta" class="results-meta"></span>
+      </div>
+      <div id="results-list" class="results-list"></div>
+      <div id="empty-results" class="empty-results" hidden>
+        <strong>Nenhuma vaga aberta com esses filtros apareceu.</strong>
+        <p>A busca inclui funções relacionadas a TI, exceto níveis sênior, pleno e equivalentes, publicadas nos últimos 30 dias. Tente outra localidade ou modalidade.</p>
+      </div>
+    </section>
+
+    <p class="privacy"><span aria-hidden="true">●</span> Resultados ordenados por data de publicação. Confirme se a vaga ainda está aberta no anúncio original.</p>
+  </main>
+  <footer>Fontes consultadas: LinkedIn e Remotive — não são a maioria dos sites nem toda a web. A cobertura depende dos anúncios disponíveis nessas plataformas.</footer>
+</body>
+</html>
