@@ -70,7 +70,8 @@ async function findJobs() {
     renderJobs(payload.jobs, payload.searched_at);
     const failedSources = Object.entries(payload.source_status || {})
       .filter(([, source]) => source.completed < source.requested)
-      .map(([name, source]) => `${name} ${source.completed}/${source.requested}`)
+      .map(([name, source]) =>
+        `${name} ${source.completed}/${source.requested}${source.error ? ` (${source.error})` : ""}`)
       .join(", ");
     const partialMessage = failedSources
       ? ` Busca parcial; fontes com falha: ${failedSources}.`

@@ -19,7 +19,10 @@ ROOT = Path(__file__).resolve().parent
 PUBLIC_ROOT = ROOT / "public"
 MAX_REQUEST_BYTES = 18 * 1024 * 1024
 MAX_SEARCH_RESULTS = 100
-MAX_LINKEDIN_DETAIL_FETCHES = 80
+MAX_LINKEDIN_DETAIL_FETCHES = 8
+LINKEDIN_PAGE_SIZE = 10
+LINKEDIN_SEARCH_TIMEOUT_SECONDS = 5
+UPSTREAM_TIMEOUT_SECONDS = 10
 RECENT_DAYS = 30
 JOBICY_CACHE_SECONDS = 15 * 60
 LINKEDIN_SEARCH_CACHE_SECONDS = 15 * 60
@@ -39,7 +42,8 @@ PL_LEVEL_SUFFIX = re.compile(r"\bpl\b(?=\s*(?:[-\u2013\u2014]\s*.*)?$)", re.IGNO
 NON_IT_TITLE = re.compile(
     r"\b(?:recruiter|recruitment|sales|marketing|human resources|"
     r"\bhr\b|accountant|accounting|customer success|business development|"
-    r"sdr|bdr|finance|financial|vendas|recrutamento|recursos humanos|"
+    r"sdr|bdr|finance|financial|vendas|procurement|purchasing|purchase|compras?|"
+    r"recrutamento|recursos humanos|"
     r"trainer|training|future roles|talent pool|general application|open application|"
     r"seguranca do trabalho|occupational safety|safety engineer)\b",
     re.IGNORECASE,
@@ -57,10 +61,10 @@ IT_TITLE = re.compile(
     re.IGNORECASE,
 )
 LINKEDIN_SEARCH_TERMS = (
+    "estágio TI",
     "(TI OR tecnologia OR informática OR sistemas OR software OR desenvolvimento "
     "OR developer OR engineer OR analista OR assistente OR estágio OR junior "
     "OR júnior OR QA OR dados OR suporte OR DevOps OR cloud)",
-    "estágio TI",
 )
 _JOBICY_CACHE = {}
 _JOBICY_CACHE_LOCK = threading.Lock()
@@ -225,47 +229,82 @@ class AppHandler(SimpleHTTPRequestHandler):
                 "keywords": term,
                 "location": "Brazil" if is_brazil_search else place,
                 "geo_id": "106057199" if is_brazil_search else "",
+                "max_pages": 6 if term == LINKEDIN_SEARCH_TERMS[0] else 1,
             }
             for term in LINKEDIN_SEARCH_TERMS
         ]
 
     @staticmethod
     def fetch_linkedin_search(search):
-        cache_key = (search["keywords"], search["location"])
-        now = time.monotonic()
-        with _LINKEDIN_CACHE_LOCK:
-            cached = _LINKEDIN_SEARCH_CACHE.get(cache_key)
+        jobs = {}
+        pages_completed = 0
+        pages_requested = 0
+        error_message = ""
+        for start in range(0, search["max_pages"] * LINKEDIN_PAGE_SIZE, LINKEDIN_PAGE_SIZE):
+            cache_key = (search["keywords"], search["location"], start)
+            now = time.monotonic()
+            with _LINKEDIN_CACHE_LOCK:
+                cached = _LINKEDIN_SEARCH_CACHE.get(cache_key)
             if cached and cached[0] > now:
-                return cached[1]
+                page_jobs = cached[1]
+            else:
+                params = {
+                    "keywords": search["keywords"],
+                    "location": search["location"],
+                    "f_TPR": "r2592000",
+                    "sortBy": "DD",
+                    "start": str(start),
+                }
+                if search.get("geo_id"):
+                    params["geoId"] = search["geo_id"]
+                query = urlencode(params)
+                request = urllib.request.Request(
+                    "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?"
+                    + query,
+                    headers={
+                        "User-Agent": USER_AGENT,
+                        "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.7",
+                    },
+                )
+                pages_requested += 1
+                try:
+                    with urllib.request.urlopen(
+                        request,
+                        timeout=LINKEDIN_SEARCH_TIMEOUT_SECONDS,
+                    ) as response:
+                        page = response.read(2_500_000).decode("utf-8", errors="replace")
+                except urllib.error.HTTPError as error:
+                    error_message = f"HTTP {error.code}"
+                    break
+                except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+                    error_message = "falha de conexão ou tempo esgotado"
+                    break
 
-        params = {
-            "keywords": search["keywords"],
-            "location": search["location"],
-            "f_TPR": "r2592000",
-            "sortBy": "DD",
+                parser = LinkedInCardParser()
+                parser.feed(page)
+                page_jobs = parser.jobs
+                for job in page_jobs:
+                    job["search_geo_id"] = search.get("geo_id", "")
+                with _LINKEDIN_CACHE_LOCK:
+                    _LINKEDIN_SEARCH_CACHE[cache_key] = (
+                        time.monotonic() + LINKEDIN_SEARCH_CACHE_SECONDS,
+                        page_jobs,
+                    )
+
+            if cached and cached[0] > now:
+                pages_requested += 1
+            pages_completed += 1
+            for job in page_jobs:
+                jobs.setdefault(job["url"], job)
+            if len(page_jobs) < LINKEDIN_PAGE_SIZE:
+                break
+
+        return {
+            "jobs": list(jobs.values()),
+            "pages_completed": pages_completed,
+            "pages_requested": pages_requested,
+            "error": error_message,
         }
-        if search.get("geo_id"):
-            params["geoId"] = search["geo_id"]
-        query = urlencode(params)
-        request = urllib.request.Request(
-            f"https://br.linkedin.com/jobs/search/?{query}",
-            headers={
-                "User-Agent": USER_AGENT,
-                "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.7",
-            },
-        )
-        with urllib.request.urlopen(request, timeout=20) as response:
-            page = response.read(2_500_000).decode("utf-8", errors="replace")
-        parser = LinkedInCardParser()
-        parser.feed(page)
-        for job in parser.jobs:
-            job["search_geo_id"] = search.get("geo_id", "")
-        with _LINKEDIN_CACHE_LOCK:
-            _LINKEDIN_SEARCH_CACHE[cache_key] = (
-                now + LINKEDIN_SEARCH_CACHE_SECONDS,
-                parser.jobs,
-            )
-        return parser.jobs
 
     @staticmethod
     def fetch_jobicy_jobs(industry):
@@ -280,7 +319,7 @@ class AppHandler(SimpleHTTPRequestHandler):
             f"https://jobicy.com/api/jobs?{query}",
             headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
         )
-        with urllib.request.urlopen(request, timeout=20) as response:
+        with urllib.request.urlopen(request, timeout=UPSTREAM_TIMEOUT_SECONDS) as response:
             response_body = response.read(5_000_000 + 1)
         if len(response_body) > 5_000_000:
             raise ValueError("A fonte Jobicy retornou dados acima do limite permitido.")
@@ -346,7 +385,7 @@ class AppHandler(SimpleHTTPRequestHandler):
             },
         )
         try:
-            with urllib.request.urlopen(request, timeout=15) as response:
+            with urllib.request.urlopen(request, timeout=UPSTREAM_TIMEOUT_SECONDS) as response:
                 page = response.read(1_500_000).decode("utf-8", errors="replace")
         except (urllib.error.URLError, TimeoutError, ValueError):
             return job
@@ -518,14 +557,16 @@ class AppHandler(SimpleHTTPRequestHandler):
 
         searches = cls.build_searches(location)
         results = []
-        linkedin_failures = 0
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-            futures = [pool.submit(cls.fetch_linkedin_search, search) for search in searches]
-            for future in concurrent.futures.as_completed(futures):
-                try:
-                    results.extend(future.result())
-                except (urllib.error.URLError, TimeoutError, OSError, ValueError):
-                    linkedin_failures += 1
+        linkedin_completed = 0
+        linkedin_requested = 0
+        linkedin_errors = []
+        for search in searches:
+            search_result = cls.fetch_linkedin_search(search)
+            results.extend(search_result["jobs"])
+            linkedin_completed += search_result["pages_completed"]
+            linkedin_requested += search_result["pages_requested"]
+            if search_result["error"]:
+                linkedin_errors.append(search_result["error"])
 
         include_remote_jobs = preference in ("all", "remote")
         jobicy_jobs = []
@@ -555,7 +596,7 @@ class AppHandler(SimpleHTTPRequestHandler):
         candidates.sort(key=lambda job: job.get("posted_date", ""), reverse=True)
 
         detailed = []
-        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
             futures = [
                 pool.submit(cls.parse_job_posting, job)
                 for job in candidates[:MAX_LINKEDIN_DETAIL_FETCHES]
@@ -565,7 +606,13 @@ class AppHandler(SimpleHTTPRequestHandler):
                     detailed.append(future.result())
                 except (urllib.error.URLError, TimeoutError, OSError, ValueError):
                     continue
-        detailed.sort(key=lambda job: job.get("posted_date", ""), reverse=True)
+        detailed_by_url = {job["url"]: job for job in detailed}
+        linkedin_jobs = []
+        for job in candidates:
+            enriched_job = detailed_by_url.get(job["url"], job)
+            if cls.valid_recent_job(enriched_job, cutoff):
+                linkedin_jobs.append(enriched_job)
+        linkedin_jobs.sort(key=lambda job: job.get("posted_date", ""), reverse=True)
 
         jobicy_candidates = []
         for posting in jobicy_jobs:
@@ -577,7 +624,7 @@ class AppHandler(SimpleHTTPRequestHandler):
 
         jobs = []
         unique_candidates = {}
-        for job in [*detailed, *jobicy_candidates]:
+        for job in [*linkedin_jobs, *jobicy_candidates]:
             unique_candidates.setdefault(job["url"], job)
         all_candidates = sorted(
             unique_candidates.values(),
@@ -635,7 +682,7 @@ class AppHandler(SimpleHTTPRequestHandler):
             if len(jobs) >= MAX_SEARCH_RESULTS:
                 break
 
-        linkedin_succeeded = len(searches) > linkedin_failures
+        linkedin_succeeded = linkedin_completed > 0
         if not linkedin_succeeded and not jobicy_successes:
             raise RequestError(
                 "Não foi possível consultar os anúncios públicos agora. Tente novamente em alguns minutos.",
@@ -643,10 +690,12 @@ class AppHandler(SimpleHTTPRequestHandler):
             )
         source_status = {
             "LinkedIn": {
-                "completed": len(searches) - linkedin_failures,
-                "requested": len(searches),
+                "completed": linkedin_completed,
+                "requested": linkedin_requested,
             }
         }
+        if linkedin_errors:
+            source_status["LinkedIn"]["error"] = "; ".join(dict.fromkeys(linkedin_errors))
         if include_remote_jobs:
             source_status["Jobicy"] = {
                 "completed": jobicy_successes,
