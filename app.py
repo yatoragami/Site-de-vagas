@@ -18,13 +18,13 @@ from flask import Flask, jsonify, request
 ROOT = Path(__file__).resolve().parent
 PUBLIC_ROOT = ROOT / "public"
 MAX_REQUEST_BYTES = 18 * 1024 * 1024
-MAX_REMOTIVE_RESPONSE_BYTES = 20 * 1024 * 1024
 MAX_SEARCH_RESULTS = 100
 MAX_LINKEDIN_DETAIL_FETCHES = 80
 RECENT_DAYS = 30
-REMOTIVE_CACHE_SECONDS = 6 * 60 * 60
+JOBICY_CACHE_SECONDS = 15 * 60
 LINKEDIN_SEARCH_CACHE_SECONDS = 15 * 60
 LINKEDIN_DETAIL_CACHE_SECONDS = 30 * 60
+JOBICY_INDUSTRIES = ("engineering", "data-science")
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
@@ -32,13 +32,16 @@ USER_AGENT = (
 
 SENIOR_LEVEL = re.compile(
     r"\b(?:senior|sr\.?|pleno|mid[- ]level|principal|staff|lead|"
-    r"especialista|specialist|gerente|manager|diretor|director|head)\b",
+    r"especialista|specialist|gerente|manager|diretor|director|head|executive|exec)\b",
     re.IGNORECASE,
 )
+PL_LEVEL_SUFFIX = re.compile(r"\bpl\b(?=\s*(?:[-\u2013\u2014]\s*.*)?$)", re.IGNORECASE)
 NON_IT_TITLE = re.compile(
     r"\b(?:recruiter|recruitment|sales|marketing|human resources|"
     r"\bhr\b|accountant|accounting|customer success|business development|"
-    r"sdr|bdr|finance|financial|vendas|recrutamento|recursos humanos)\b",
+    r"sdr|bdr|finance|financial|vendas|recrutamento|recursos humanos|"
+    r"trainer|training|future roles|talent pool|general application|open application|"
+    r"seguranca do trabalho|occupational safety|safety engineer)\b",
     re.IGNORECASE,
 )
 IT_TITLE = re.compile(
@@ -54,23 +57,12 @@ IT_TITLE = re.compile(
     re.IGNORECASE,
 )
 LINKEDIN_SEARCH_TERMS = (
-    "estágio TI",
-    "estágio desenvolvimento",
-    "estágio suporte",
-    "junior developer",
-    "junior analyst IT",
-    "software engineer",
-    "programador sistemas",
-    "analista de sistemas",
-    "analista de TI",
-    "analista dados BI",
-    "analista QA segurança",
-    "assistente TI suporte",
-    "service desk support",
-    "network cloud DevOps engineer",
+    "(TI OR tecnologia OR informática OR sistemas OR software OR desenvolvimento "
+    "OR developer OR engineer OR analista OR assistente OR estágio OR junior "
+    "OR júnior OR QA OR dados OR suporte OR DevOps OR cloud)",
 )
-_REMOTIVE_CACHE = {"expires_at": 0, "jobs": None}
-_REMOTIVE_CACHE_LOCK = threading.Lock()
+_JOBICY_CACHE = {}
+_JOBICY_CACHE_LOCK = threading.Lock()
 _LINKEDIN_SEARCH_CACHE = {}
 _LINKEDIN_DETAIL_CACHE = {}
 _LINKEDIN_CACHE_LOCK = threading.Lock()
@@ -275,65 +267,63 @@ class AppHandler(SimpleHTTPRequestHandler):
         return parser.jobs
 
     @staticmethod
-    def fetch_remotive_jobs():
-        with _REMOTIVE_CACHE_LOCK:
-            if _REMOTIVE_CACHE["jobs"] is not None and _REMOTIVE_CACHE["expires_at"] > time.monotonic():
-                return _REMOTIVE_CACHE["jobs"]
+    def fetch_jobicy_jobs(industry):
+        now = time.monotonic()
+        with _JOBICY_CACHE_LOCK:
+            cached = _JOBICY_CACHE.get(industry)
+            if cached and cached[0] > now:
+                return cached[1]
 
-            request = urllib.request.Request(
-                "https://remotive.com/api/remote-jobs",
-                headers={"User-Agent": USER_AGENT},
-            )
-            with urllib.request.urlopen(request, timeout=20) as response:
-                response_body = response.read(MAX_REMOTIVE_RESPONSE_BYTES + 1)
-            if len(response_body) > MAX_REMOTIVE_RESPONSE_BYTES:
-                raise ValueError("A fonte Remotive retornou dados acima do limite permitido.")
-            payload = json.loads(response_body.decode("utf-8"))
-            jobs = payload.get("jobs") if isinstance(payload, dict) else None
-            if not isinstance(jobs, list):
-                raise ValueError("A fonte Remotive retornou dados inválidos.")
+        query = urlencode({"geo": "brazil", "industry": industry, "count": 100})
+        request = urllib.request.Request(
+            f"https://jobicy.com/api/jobs?{query}",
+            headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+        )
+        with urllib.request.urlopen(request, timeout=20) as response:
+            response_body = response.read(5_000_000 + 1)
+        if len(response_body) > 5_000_000:
+            raise ValueError("A fonte Jobicy retornou dados acima do limite permitido.")
+        payload = json.loads(response_body.decode("utf-8"))
+        jobs = payload.get("jobs") if isinstance(payload, dict) else None
+        if not isinstance(jobs, list):
+            raise ValueError("A fonte Jobicy retornou dados inválidos.")
 
-            _REMOTIVE_CACHE.update({
-                "expires_at": time.monotonic() + REMOTIVE_CACHE_SECONDS,
-                "jobs": jobs,
-            })
-            return jobs
+        with _JOBICY_CACHE_LOCK:
+            _JOBICY_CACHE[industry] = (now + JOBICY_CACHE_SECONDS, jobs)
+        return jobs
 
     @staticmethod
-    def normalize_remotive_job(posting):
+    def normalize_jobicy_job(posting):
         if not isinstance(posting, dict):
             return None
         url = posting.get("url", "")
         parsed_url = urlparse(url)
-        if parsed_url.scheme != "https" or parsed_url.hostname != "remotive.com":
+        if parsed_url.scheme != "https" or parsed_url.hostname not in ("jobicy.com", "www.jobicy.com"):
             return None
 
-        description_html = html.unescape(str(posting.get("description") or ""))
+        description_html = html.unescape(str(posting.get("jobDescription") or posting.get("jobExcerpt") or ""))
         description = " ".join(html.unescape(re.sub(r"<[^>]+>", " ", description_html)).split())
-        tags = posting.get("tags")
-        searchable_description = description
-        if isinstance(tags, list):
-            searchable_description += " " + " ".join(str(tag) for tag in tags)
-        required_location = str(posting.get("candidate_required_location") or "").strip()
+        location = str(posting.get("jobGeo") or "").strip()
         return {
             "id": str(posting.get("id") or ""),
-            "title": str(posting.get("title") or ""),
-            "company": str(posting.get("company_name") or "Empresa não informada"),
-            "location": required_location or "Remoto",
+            "title": str(posting.get("jobTitle") or ""),
+            "company": str(posting.get("companyName") or "Empresa não informada"),
+            "location": location or "Remoto",
             "work_mode": "Remoto",
-            "posted_date": str(posting.get("publication_date") or "")[:10],
+            "posted_date": str(posting.get("pubDate") or "")[:10],
+            "valid_through": str(posting.get("expirationDate") or "")[:10],
             "url": url,
             "snippet": description[:280] + ("…" if len(description) > 280 else ""),
-            "description": searchable_description,
-            "candidate_required_location": required_location,
-            "source": "Remotive",
+            "description": description[:8_000],
+            "job_level": str(posting.get("jobLevel") or ""),
+            "source": "Jobicy",
         }
 
     @staticmethod
-    def is_remotive_brazil_eligible(job):
-        location = fold_text(job.get("candidate_required_location", ""))
+    def is_jobicy_brazil_eligible(job):
+        location = fold_text(job.get("location", ""))
         return re.search(
-            r"\b(?:worldwide|anywhere|brazil|brasil|latin america|south america)\b",
+            r"\b(?:brazil|brasil|anywhere|worldwide|latin america|south america|latam)\b",
             location,
         ) is not None
 
@@ -425,6 +415,8 @@ class AppHandler(SimpleHTTPRequestHandler):
 
     @staticmethod
     def actual_work_mode(job):
+        if job.get("work_mode") == "Remoto":
+            return "Remoto"
         explicit_type = fold_text(job.get("job_location_type", ""))
         title = fold_text(job.get("title", ""))
         location = fold_text(job.get("location", ""))
@@ -494,7 +486,14 @@ class AppHandler(SimpleHTTPRequestHandler):
             return False
 
         normalized_title = fold_text(title)
-        if SENIOR_LEVEL.search(normalized_title) or NON_IT_TITLE.search(normalized_title):
+        normalized_level = fold_text(job.get("job_level", ""))
+        if (
+            SENIOR_LEVEL.search(normalized_title)
+            or PL_LEVEL_SUFFIX.search(normalized_title)
+            or SENIOR_LEVEL.search(normalized_level)
+            or PL_LEVEL_SUFFIX.search(normalized_level)
+            or NON_IT_TITLE.search(normalized_title)
+        ):
             return False
         if not IT_TITLE.search(normalized_title):
             return False
@@ -520,21 +519,28 @@ class AppHandler(SimpleHTTPRequestHandler):
         results = []
         linkedin_failures = 0
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
-            futures = {pool.submit(cls.fetch_linkedin_search, search): search for search in searches}
-            remotive_future = pool.submit(cls.fetch_remotive_jobs) if preference in ("all", "remote") else None
+            futures = [pool.submit(cls.fetch_linkedin_search, search) for search in searches]
             for future in concurrent.futures.as_completed(futures):
                 try:
                     results.extend(future.result())
                 except (urllib.error.URLError, TimeoutError, OSError, ValueError):
                     linkedin_failures += 1
-            remotive_jobs = []
-            remotive_succeeded = False
-            if remotive_future is not None:
-                try:
-                    remotive_jobs = remotive_future.result()
-                    remotive_succeeded = True
-                except (urllib.error.URLError, TimeoutError, OSError, ValueError):
-                    pass
+
+        include_remote_jobs = preference in ("all", "remote")
+        jobicy_jobs = []
+        jobicy_successes = 0
+        if include_remote_jobs:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                jobicy_futures = [
+                    pool.submit(cls.fetch_jobicy_jobs, industry)
+                    for industry in JOBICY_INDUSTRIES
+                ]
+                for future in concurrent.futures.as_completed(jobicy_futures):
+                    try:
+                        jobicy_jobs.extend(future.result())
+                        jobicy_successes += 1
+                    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+                        continue
 
         deduplicated = {}
         for job in results:
@@ -560,35 +566,47 @@ class AppHandler(SimpleHTTPRequestHandler):
                     continue
         detailed.sort(key=lambda job: job.get("posted_date", ""), reverse=True)
 
-        remotive_candidates = []
-        for posting in remotive_jobs:
-            job = cls.normalize_remotive_job(posting)
-            if not job or not cls.is_remotive_brazil_eligible(job):
+        jobicy_candidates = []
+        for posting in jobicy_jobs:
+            job = cls.normalize_jobicy_job(posting)
+            if not job or not cls.is_jobicy_brazil_eligible(job):
                 continue
             if cls.valid_recent_job(job, cutoff):
-                remotive_candidates.append(job)
+                jobicy_candidates.append(job)
 
         jobs = []
+        unique_candidates = {}
+        for job in [*detailed, *jobicy_candidates]:
+            unique_candidates.setdefault(job["url"], job)
         all_candidates = sorted(
-            [*detailed, *remotive_candidates],
+            unique_candidates.values(),
             key=lambda job: job.get("posted_date", ""),
             reverse=True,
         )
+        location_query = fold_text(
+            re.sub(r"\s+", " ", re.sub(r"[,/]+", " ", location))
+        ).strip()
+        has_specific_location = location.strip().casefold() not in ("", "brasil", "brazil")
         for job in all_candidates:
-            actual_mode = "Remoto" if job.get("source") == "Remotive" else cls.actual_work_mode(job)
+            actual_mode = cls.actual_work_mode(job)
+            job_location = fold_text(
+                re.sub(r"\s+", " ", re.sub(r"[,/]+", " ", job.get("location", "")))
+            ).strip()
+            location_matches = bool(location_query and location_query in job_location)
             if preference == "hybrid" and actual_mode != "Híbrido":
                 continue
             if preference == "remote" and actual_mode != "Remoto":
                 continue
             if preference == "onsite" and actual_mode not in ("Presencial/Não informado", "Não informado"):
                 continue
-            if actual_mode == "Remoto" and job.get("source") == "Remotive" and not cls.is_remotive_brazil_eligible(job):
+            if actual_mode == "Remoto" and job.get("source") == "Jobicy" and not cls.is_jobicy_brazil_eligible(job):
                 continue
             if (
                 actual_mode == "Remoto"
-                and job.get("source") != "Remotive"
+                and job.get("source") != "Jobicy"
                 and not cls.is_brazil_eligible_remote(job)
                 and not cls.is_brazilian_job(job)
+                and not (has_specific_location and location_matches)
             ):
                 continue
             if (
@@ -597,14 +615,9 @@ class AppHandler(SimpleHTTPRequestHandler):
                 and not cls.is_brazilian_job(job)
             ):
                 continue
-            if location.strip().casefold() not in ("", "brasil", "brazil"):
-                location_query = fold_text(re.sub(r"\s+", " ", re.sub(r"[,/]+", " ", location))).strip()
-                job_location = fold_text(re.sub(r"\s+", " ", re.sub(r"[,/]+", " ", job.get("location", "")))).strip()
+            if has_specific_location:
                 if actual_mode != "Remoto" and location_query not in job_location:
                     continue
-                if actual_mode == "Remoto" and job.get("source") == "Remotive":
-                    if not cls.is_remotive_brazil_eligible(job):
-                        continue
             job["work_mode"] = actual_mode
             jobs.append({
                 "id": job.get("id", ""),
@@ -622,23 +635,33 @@ class AppHandler(SimpleHTTPRequestHandler):
                 break
 
         linkedin_succeeded = len(searches) > linkedin_failures
-        if not linkedin_succeeded and not remotive_succeeded:
+        if not linkedin_succeeded and not jobicy_successes:
             raise RequestError(
                 "Não foi possível consultar os anúncios públicos agora. Tente novamente em alguns minutos.",
                 502,
             )
-        successful_searches = len(searches) - linkedin_failures + int(remotive_succeeded)
-        requested_searches = len(searches) + int(preference in ("all", "remote"))
+        source_status = {
+            "LinkedIn": {
+                "completed": len(searches) - linkedin_failures,
+                "requested": len(searches),
+            }
+        }
+        if include_remote_jobs:
+            source_status["Jobicy"] = {
+                "completed": jobicy_successes,
+                "requested": len(JOBICY_INDUSTRIES),
+            }
+        successful_searches = sum(source["completed"] for source in source_status.values())
+        requested_searches = sum(source["requested"] for source in source_status.values())
         return {
             "jobs": jobs,
             "searched_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "window_days": RECENT_DAYS,
-            "sources": (["LinkedIn"] if linkedin_succeeded else [])
-            + (["Remotive"] if remotive_succeeded else []),
+            "sources": [name for name, result in source_status.items() if result["completed"]],
+            "source_status": source_status,
             "searches_completed": successful_searches,
             "searches_requested": requested_searches,
-            "searches_failed": linkedin_failures
-            + int(preference in ("all", "remote") and not remotive_succeeded),
+            "searches_failed": requested_searches - successful_searches,
             "results_limit_reached": len(jobs) == MAX_SEARCH_RESULTS,
         }
 

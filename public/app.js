@@ -68,8 +68,12 @@ async function findJobs() {
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || "Não foi possível procurar vagas.");
     renderJobs(payload.jobs, payload.searched_at);
-    const partialMessage = payload.searches_failed
-      ? ` Busca parcial: ${payload.searches_completed} de ${payload.searches_requested} consultas concluídas.`
+    const failedSources = Object.entries(payload.source_status || {})
+      .filter(([, source]) => source.completed < source.requested)
+      .map(([name, source]) => `${name} ${source.completed}/${source.requested}`)
+      .join(", ");
+    const partialMessage = failedSources
+      ? ` Busca parcial; fontes com falha: ${failedSources}.`
       : "";
     const limitMessage = payload.results_limit_reached
       ? ` Exibindo os primeiros ${payload.jobs.length} resultados; refine os filtros para restringir a busca.`

@@ -24,10 +24,10 @@ A Vercel instala Flask a partir de `requirements.txt`, publica `public/` como ar
 
 ## Como a busca funciona
 
-- Consulta anúncios públicos do LinkedIn e o feed público do Remotive. Não varre a maioria dos sites de emprego nem a web inteira.
+- Consulta cartões públicos do LinkedIn e a API pública da Jobicy (engenharia e ciência de dados, vagas remotas elegíveis no Brasil). Não varre a maioria dos sites de emprego nem a web inteira.
 - Inclui diferentes funções relacionadas a TI sem exigir que o título diga estágio/júnior/assistente. Exclui títulos sênior/pleno e equivalentes, vagas claramente não técnicas, além de anúncios fora do período.
 - Filtra anúncios publicados nos últimos 30 dias e ordena pela data de publicação, mais recente primeiro.
 - Mostra até 100 resultados por busca para manter a página responsiva.
-- O feed do Remotive é armazenado em cache por seis horas para respeitar a frequência de consulta recomendada pelo serviço.
-- As buscas e detalhes do LinkedIn são armazenados em cache por 15 e 30 minutos, respectivamente, para reduzir consultas repetidas.
+- A Jobicy limita a API pública a anúncios recentes (últimos sete dias); o LinkedIn pode ampliar esse período até 30 dias.
+- Os feeds Jobicy são armazenados em cache por 15 minutos. As buscas e detalhes do LinkedIn são armazenados em cache por 15 e 30 minutos, respectivamente, para reduzir consultas repetidas.
 - Os resultados e links apontam para as fontes originais. A aplicação não cobre toda a web; disponibilidade, modalidade e situação da vaga devem ser confirmadas no anúncio original.
