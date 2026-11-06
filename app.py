@@ -44,7 +44,7 @@ NON_IT_TITLE = re.compile(
     r"\bhr\b|accountant|accounting|customer success|business development|"
     r"sdr|bdr|finance|financial|vendas|procurement|purchasing|purchase|compras?|"
     r"recrutamento|recursos humanos|"
-    r"trainer|training|future roles|talent pool|general application|open application|"
+    r"trainers?|training|future roles|talent pool|general application|open application|"
     r"seguranca do trabalho|occupational safety|safety engineer)\b",
     re.IGNORECASE,
 )
