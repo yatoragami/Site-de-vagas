@@ -13,7 +13,10 @@ from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urlencode, urlparse
 
+from flask import Flask, jsonify, request
+
 ROOT = Path(__file__).resolve().parent
+PUBLIC_ROOT = ROOT / "public"
 MAX_REQUEST_BYTES = 18 * 1024 * 1024
 MAX_REMOTIVE_RESPONSE_BYTES = 20 * 1024 * 1024
 MAX_SEARCH_RESULTS = 100
@@ -192,7 +195,7 @@ class RequestError(Exception):
 
 class AppHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, directory=str(ROOT), **kwargs)
+        super().__init__(*args, directory=str(PUBLIC_ROOT), **kwargs)
 
     def do_POST(self):
         route = urlparse(self.path).path
@@ -658,6 +661,25 @@ def main():
         print("\nServidor encerrado.")
     finally:
         server.server_close()
+
+
+app = Flask(__name__)
+
+
+@app.post("/api/search")
+def api_search():
+    if request.content_length is None or request.content_length < 1:
+        return jsonify({"error": "A solicitação está vazia."}), 400
+    if request.content_length > MAX_REQUEST_BYTES:
+        return jsonify({"error": "A solicitação excede o limite permitido."}), 413
+
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return jsonify({"error": "O corpo da solicitação não contém JSON válido."}), 400
+    try:
+        return jsonify(AppHandler.search_jobs(body))
+    except RequestError as error:
+        return jsonify({"error": str(error)}), error.status
 
 
 if __name__ == "__main__":

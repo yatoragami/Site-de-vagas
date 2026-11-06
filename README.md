@@ -5,10 +5,22 @@
 Requer Python 3.10 ou superior. No PowerShell, nesta pasta, execute:
 
 ```powershell
+python -m pip install -r requirements.txt
 python app.py
 ```
 
 Abra `http://127.0.0.1:8765`. A busca começa automaticamente; informe uma localidade e/ou modalidade para filtrar. O servidor escuta apenas em `127.0.0.1`.
+
+## Publicar na Vercel
+
+O projeto está configurado para a Vercel: `app.py` exporta a API Flask e os arquivos da interface ficam em `public/`.
+
+1. Importe `yatoragami/Site-de-vagas` na Vercel e mantenha **Root Directory** como `./`.
+2. Deixe o **Framework Preset** em `Other` ou use o preset Python/Flask, caso seja detectado automaticamente.
+3. Não é necessário configurar Build Command, Output Directory, Install Command nem variáveis de ambiente.
+4. Remova a variável de exemplo `EXAMPLE_NAME`, se ela ainda aparecer, e clique em **Deploy**.
+
+A Vercel instala Flask a partir de `requirements.txt`, publica `public/` como arquivos estáticos e executa a busca em `/api/search`. O cache em memória pode não persistir entre chamadas serverless.
 
 ## Como a busca funciona
 
