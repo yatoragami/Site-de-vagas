@@ -45,10 +45,10 @@ NON_IT_TITLE = re.compile(
     re.IGNORECASE,
 )
 IT_TITLE = re.compile(
-    r"\b(?:ti|it|informatica|computer|computing|tecnologia|technology|sistemas|systems|software|"
+    r"\b(?:ti|it|informatica|computer|computing|computacao|tecnologia|technology|sistemas|systems|software|"
     r"front[- ]?end|back[- ]?end|full[- ]?stack|mobile|web|ux|ui|"
     r"desenvolvedor|desenvolvimento|developer|programador|programming|"
-    r"engenheir[oa]|engineer|qa|quality|teste|testing|dados|data|"
+    r"engenheir[oa]|engineer|engenharia de testes|computer engineering|qa|quality|testes?|testing|dados|data|"
     r"infraestrutura|infrastructure|network|redes|cyber|cybersecurity|security|"
     r"seguranca|suporte|support|service desk|help desk|devops|cloud|"
     r"database|banco de dados|telecom|automacao|automation|hardware|"
@@ -60,6 +60,7 @@ LINKEDIN_SEARCH_TERMS = (
     "(TI OR tecnologia OR informática OR sistemas OR software OR desenvolvimento "
     "OR developer OR engineer OR analista OR assistente OR estágio OR junior "
     "OR júnior OR QA OR dados OR suporte OR DevOps OR cloud)",
+    "estágio TI",
 )
 _JOBICY_CACHE = {}
 _JOBICY_CACHE_LOCK = threading.Lock()
@@ -518,7 +519,7 @@ class AppHandler(SimpleHTTPRequestHandler):
         searches = cls.build_searches(location)
         results = []
         linkedin_failures = 0
-        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
             futures = [pool.submit(cls.fetch_linkedin_search, search) for search in searches]
             for future in concurrent.futures.as_completed(futures):
                 try:

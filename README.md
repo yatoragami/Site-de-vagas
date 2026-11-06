@@ -24,7 +24,7 @@ A Vercel instala Flask a partir de `requirements.txt`, publica `public/` como ar
 
 ## Como a busca funciona
 
-- Consulta cartões públicos do LinkedIn e a API pública da Jobicy (engenharia e ciência de dados, vagas remotas elegíveis no Brasil). Não varre a maioria dos sites de emprego nem a web inteira.
+- Consulta cartões públicos do LinkedIn com uma busca ampla de TI e outra dedicada a estágio, além da API pública da Jobicy (engenharia e ciência de dados, vagas remotas elegíveis no Brasil). Não varre a maioria dos sites de emprego nem a web inteira.
 - Inclui diferentes funções relacionadas a TI sem exigir que o título diga estágio/júnior/assistente. Exclui títulos sênior/pleno e equivalentes, vagas claramente não técnicas, além de anúncios fora do período.
 - Filtra anúncios publicados nos últimos 30 dias e ordena pela data de publicação, mais recente primeiro.
 - Mostra até 100 resultados por busca para manter a página responsiva.
