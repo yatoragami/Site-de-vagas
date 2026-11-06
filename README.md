@@ -13,7 +13,7 @@ Abra `http://127.0.0.1:8765`. A busca começa automaticamente; informe uma local
 
 ## Publicar na Vercel
 
-O projeto está configurado para a Vercel: `app.py` exporta a API Flask e os arquivos da interface ficam em `public/`.
+O projeto está configurado para a Vercel: `api/search.py` publica a função de busca Flask, e os arquivos da interface ficam em `public/`.
 
 1. Importe `yatoragami/Site-de-vagas` na Vercel e mantenha **Root Directory** como `./`.
 2. Deixe o **Framework Preset** em `Other` ou use o preset Python/Flask, caso seja detectado automaticamente.
